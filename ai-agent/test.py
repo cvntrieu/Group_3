@@ -47,23 +47,23 @@ def main():
     #     print("Original Text:", agentResponse4.summary.raw_text)
         
     # Input for Read file and summary
-    # user_input5 = """
-    #     Please read the first pdf file and provide a summary in about 20 words of its contents.
-    # """
-    # agentResponse5 = process_user_input(user_input5)
-    # print(agentResponse5.message)
-    # if agentResponse5.summary:
-    #     print("Summary:", agentResponse5.summary.summary)
-    #     print("Original Text:", agentResponse5.summary.raw_text)
+    user_input5 = """
+        Please read the first pdf file and provide a summary in about 20 words of its contents.
+    """
+    agentResponse5 = process_user_input(user_input5)
+    print(agentResponse5.message)
+    if agentResponse5.summary:
+        print("Summary:", agentResponse5.summary.summary)
+        # print("Original Text:", agentResponse5.summary.raw_text)
     
     # Input for Read file and summary
-    user_input6 = """
-        Please read the first pdf file.
-    """
-    agentResponse6 = process_user_input(user_input6)
-    print(agentResponse6.message)
-    if agentResponse6.raw_text:
-        print("Text:", agentResponse6.raw_text)
+    # user_input6 = """
+    #     Please read the first pdf file.
+    # """
+    # agentResponse6 = process_user_input(user_input6)
+    # print(agentResponse6.message)
+    # if agentResponse6.raw_text:
+    #     print("Text:", agentResponse6.raw_text)
 
 if __name__ == "__main__":
     main()

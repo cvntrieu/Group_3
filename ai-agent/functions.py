@@ -43,7 +43,7 @@ def route_request(user_input: str) -> RequestType:
     )
     return result
 
-def handle_summarization(text: str, max_words: int = 20) -> Summarize:
+def handle_summarization(text: str, max_words: int = 50) -> Summarize:
     """Handle text summarization."""
     logger.info("Handling summarization...")
     
@@ -66,6 +66,7 @@ def handle_summarization(text: str, max_words: int = 20) -> Summarize:
     )
     
     summary = completion.choices[0].message.parsed
+    summary.raw_text = text
     logger.info("Summarization completed.")
     
     return summary
@@ -111,7 +112,7 @@ def handle_read_file_or_summary(user_input: str, max_words: int = 50, intent_sum
             return FileContent(
                 file_name=route_result.file_name,
                 content=file_content,
-                summary="Summary not requested."
+                summary=summary
             )
         else:
             return FileContent(
