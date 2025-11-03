@@ -8,7 +8,6 @@ namespace api.Models
 {
     public class User : IdentityUser
     {
-        public int ConversationHistoryId { get; set; }
         public ConversationHistory ConversationHistory { get; set; } = null!;
     }
 }
