@@ -1,4 +1,5 @@
 from functions import process_user_input
+from storage import cache
 
 def main():
     # user_input1 = """
@@ -47,13 +48,13 @@ def main():
     #     print("Original Text:", agentResponse4.summary.raw_text)
         
     # Input for Read file and summary
-    user_input5 = """
-        Please read the first pdf file and provide a summary in about 20 words of its contents.
-    """
-    agentResponse5 = process_user_input(user_input5)
-    print(agentResponse5.message)
-    if agentResponse5.summary:
-        print("Summary:", agentResponse5.summary.summary)
+    # user_input5 = """
+    #     Please read the first pdf file and provide a summary in about 20 words of its contents.
+    # """
+    # agentResponse5 = process_user_input(user_input5)
+    # print(agentResponse5.message)
+    # if agentResponse5.summary:
+    #     print("Summary:", agentResponse5.summary.summary)
         # print("Original Text:", agentResponse5.summary.raw_text)
     
     # Input for Read file and summary
@@ -64,6 +65,17 @@ def main():
     # print(agentResponse6.message)
     # if agentResponse6.raw_text:
     #     print("Text:", agentResponse6.raw_text)
+    context = cache.get_last_n_pairs(5)
+    print("Context:", context)
+    user_input7 = "What are we talking about?"
+    agentResponse7 = process_user_input(user_input7, context=context)
+    print(agentResponse7.message)
+    cache.add_user_message(user_input7)
+    if agentResponse7.message:
+        cache.add_agent_message(agentResponse7.message)
+    else:
+        cache.add_agent_message("")
+
 
 if __name__ == "__main__":
     main()
