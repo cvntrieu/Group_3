@@ -26,30 +26,35 @@ namespace api.Controllers
 
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetConversationHistory()
+        public async Task<IActionResult> GetConversationHistory([FromQuery] int? limit)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
             var userId = _userManager.GetUserId(User);
             if (string.IsNullOrEmpty(userId))
-            {
                 return Unauthorized();
-            }
 
             var history = await _conversationHistoryRepository.GetByUserIdAsync(userId);
             if (history == null)
-            {
                 return Ok(new { Message = "No conversation history found for the user." });
+
+            var messages = await _messageRepository.GetAllByHistoryIdAsync(history.Id);
+
+            // Sort theo CreatedAt
+            messages = messages
+                .OrderBy(m => m.CreatedAt)
+                .ToList();
+
+            if (limit.HasValue)
+            {
+                messages = messages
+                    .TakeLast(limit.Value)   // chỉ lấy n message cuối
+                    .ToList();
             }
 
             ConversationHistoryDto historyDto = history.ToDto();
-            List<Message> messages = await _messageRepository.GetAllByHistoryIdAsync(history.Id);
             historyDto.Messages = messages.Select(m => m.ToDto()).ToList();
 
             return Ok(historyDto);
         }
+
     }
 }
