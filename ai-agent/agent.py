@@ -26,9 +26,8 @@ class Assistant(Agent):
             # You are curious, friendly, and have a sense of humor.""",
             instructions="""
                 You are a helpful voice AI assistant.
-                If the user requests any operation involving access to a local file,
-                you must call the function process_text_request() and pass the user’s request to it.
-                For all other requests, respond normally.
+                You eagerly assist users with their questions.
+                When appropriate, use the available tools to answer the user's request.
             """
         )
         self.context_pairs = []
@@ -59,7 +58,10 @@ class Assistant(Agent):
     
     @function_tool
     async def process_text_request(self, ctx: RunContext, user_input: str) -> str:
-        """Process user text or voice request using the process_user_input function."""
+        """
+        Reads the content of a local file or provides a summary of it.
+        Use this function when the user asks to read, analyze, or summarize a local file.
+        """
         try:
             assistant = ctx.agent
             context_pairs = assistant.context_pairs
