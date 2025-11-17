@@ -18,7 +18,8 @@ class ConversationCache:
     Keep an in-memory buffer of messages (CreateMessageDto shape)
     Buffer will be flushed to backend when we've accumulated `pairs_to_flush` pairs (user+bot).
     """
-    def __init__(self, pairs_to_flush: int = PAIRS_TO_FLUSH):
+    def __init__(self, username: str, pairs_to_flush: int = PAIRS_TO_FLUSH):
+        self.username = username
         self.pairs_to_flush = pairs_to_flush
         self._pending_messages: List[Dict] = []  # list of CreateMessageDto: {SenderType, Content, CreatedAt}
         self._pair_count = 0
@@ -32,7 +33,7 @@ class ConversationCache:
         if self._token and time.time() < self._token_expiry:
             return
         url = f"{BACKEND_BASE}/api/account/login"
-        payload = {"username": LOGIN_USERNAME}
+        payload = {"username": self.username}
         resp = self.session.post(url, json=payload, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -224,4 +225,4 @@ class ConversationCache:
 
 
 # create a global cache instance for convenience
-cache = ConversationCache(pairs_to_flush=int(PAIRS_TO_FLUSH))
+# cache = ConversationCache(pairs_to_flush=int(PAIRS_TO_FLUSH))
