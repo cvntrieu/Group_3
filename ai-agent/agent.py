@@ -1,8 +1,9 @@
 import os
-from storage import cache
+from storage import ConversationCache
 from dotenv import load_dotenv
 from datetime import datetime
 from logger import logger
+from const import PAIRS_TO_FLUSH
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext
@@ -33,9 +34,12 @@ class Assistant(Agent):
         )
         self.context_pairs = []
 
-    def update_context(self):
+
+    def update_context(self, username: str):
         """Always keep the latest 5 context pairs."""
-        new_pairs = cache.get_last_n_pairs(5)
+        self.cache = ConversationCache(username=username, pairs_to_flush=int(PAIRS_TO_FLUSH))
+        
+        new_pairs = self.cache.get_last_n_pairs(5)
         self.context_pairs = new_pairs
     
     # async def on_transcription(self, ctx: RunContext, transcription: str):
@@ -79,9 +83,8 @@ class Assistant(Agent):
 
 async def entrypoint(ctx: agents.JobContext):
     """Entry point for the agent session."""
-    
+
     assistant = Assistant()
-    assistant.update_context()
 
     session = AgentSession(
         stt=azure.STT(
@@ -110,24 +113,24 @@ async def entrypoint(ctx: agents.JobContext):
                 if role == "user":
                     # USER input text
                     logger.info(f"[USER] {content}")
-                    cache.add_user_message(content)
+                    assistant.cache.add_user_message(content)
                 elif role == "assistant":
                     # AGENT response text
                     logger.info(f"[AGENT] {content}")
-                    cache.add_agent_message(content)
+                    assistant.cache.add_agent_message(content)
             elif isinstance(content, ImageContent):
                 # image is either a rtc.VideoFrame or URL to the image
                 print(f" - image: {content.image}")
             elif isinstance(content, AudioContent):
                 # frame is a list[rtc.AudioFrame]
                 print(f" - audio: {content.frame}, transcript: {content.transcript}")
-        assistant.update_context()
+        assistant.update_context(ctx.room.local_participant.identity)
         print("Updated context pairs:", assistant.context_pairs)
     
     @session.on("close")
     def on_session_close():
         logger.info("Session is closing.")
-        cache.flush()
+        assistant.cache.flush()
 
     await session.start(
         room=ctx.room,
@@ -137,6 +140,9 @@ async def entrypoint(ctx: agents.JobContext):
             noise_cancellation=noise_cancellation.BVC(), 
         ),
     )
+
+    username = ctx.room.local_participant.identity
+    assistant.update_context(username=username)
 
 
 if __name__ == "__main__":
