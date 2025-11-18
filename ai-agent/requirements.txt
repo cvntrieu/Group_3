@@ -5,3 +5,5 @@ openai
 pydantic
 PyPDF2
 python-docx
+opencv-python 
+numpy
