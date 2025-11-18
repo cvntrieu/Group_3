@@ -59,18 +59,47 @@ export function AgentControlBar({
     handleCameraDeviceSelectError,
   } = useInputControls({ onDeviceError, saveUserChoices });
 
+  const handleSendMessage = async (message: string) => {
+    await send(message);
+  };
+
+  const handleToggleTranscript = useCallback(
+    (open: boolean) => {
+      setChatOpen(open);
+      onChatOpenChange?.(open);
+    },
+    [onChatOpenChange, setChatOpen]
+  );
+
   useEffect(() => {
     if (!room) return;
     const textDecoder = new TextDecoder();
+
     const handleAgentCommand = async (data: any) => {
       if (data.type === 'control_camera') {
         console.log(`Agent command received: Turn camera ${data.status}`);
         try {
           const enabled = data.status === 'on';
-          await room.localParticipant.setCameraEnabled(enabled);
+            await room.localParticipant.setCameraEnabled(enabled);
+          } catch (error) {
+            console.error("Failed to execute camera control:", error);
+          }
+        } 
+
+      else if (data.type === 'control_microphone') {
+        console.log(`Agent command received: Turn mic ${data.status}`);
+        try {
+          const enabled = data.status === 'on';
+          await room.localParticipant.setMicrophoneEnabled(enabled);
         } catch (error) {
-          console.error("Failed to execute camera control:", error);
+          console.error("Failed to execute mic control:", error);
         }
+      }
+
+      else if (data.type === 'control_chat') {
+        console.log(`Agent command received: Turn chat ${data.status}`);
+        const open = data.status === 'on';
+        handleToggleTranscript(open); 
       }
     };
 
@@ -83,23 +112,13 @@ export function AgentControlBar({
         console.error("Failed to parse agent data packet:", error);
       }
     };
+
     room.on(RoomEvent.DataReceived, handleDataReceived);
+
     return () => {
       room.off(RoomEvent.DataReceived, handleDataReceived);
     };
-  }, [room]);
-
-  const handleSendMessage = async (message: string) => {
-    await send(message);
-  };
-
-  const handleToggleTranscript = useCallback(
-    (open: boolean) => {
-      setChatOpen(open);
-      onChatOpenChange?.(open);
-    },
-    [onChatOpenChange, setChatOpen]
-  );
+  }, [room, handleToggleTranscript]);
 
   const handleDisconnect = useCallback(async () => {
     endSession();

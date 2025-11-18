@@ -9,8 +9,7 @@ from utils import (
     read_file_content,
     get_nth_file_info,
 )
-import base64
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 model = MODEL
 model_tts = MODEL_TTS
@@ -222,46 +221,6 @@ def handle_read_file_or_summary(
                 ),
             )
 
-
-def handle_describe_image(image_path: str, user_prompt: str, max_words: int) -> str:
-    """
-    Take an image as input and return a description of it, limited to max_words words.
-    """
-    # Read image và encode base64
-    with open(image_path, "rb") as f:
-        image_data = base64.b64encode(f.read()).decode("utf-8")
-
-    # Prompt
-    prompt_text = f"User asked: '{user_prompt}'. Describe this image in no more than {max_words} words to answer them."
-
-    # Call GPT-4o-mini with multimodal input
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a skilled assistant who describes images concisely, clearly, and naturally.",
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_text, 
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
-                    },
-                ],
-            },
-        ],
-    )
-
-    description = response.choices[0].message.content.strip()
-    return description
-
-
 def handle_normal_chat(user_input: str, context: List[Dict]) -> str:
     """Handle normal chat requests."""
     logger.info("Handling normal chat...")
@@ -297,6 +256,29 @@ def handle_normal_chat(user_input: str, context: List[Dict]) -> str:
     response_text = completion.choices[0].message.content.strip()
     logger.info("Normal chat response generated.")
     return response_text
+
+def handle_image_description(user_input: str, base64_image: str) -> str:
+    """Handle image description requests."""
+    logger.info("Handling image description...")
+    result = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_input},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ],
+        max_tokens=100
+    )
+    return result.choices[0].message.content
 
 
 def process_user_input(user_input: str, context: List[Dict]) -> AgentResponse:

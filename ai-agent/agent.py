@@ -1,25 +1,18 @@
 import os
-import cv2
-import uuid
 import base64
-import numpy as np
-import tempfile
+import asyncio
+import io
+import json
+
 from storage import ConversationCache
 from dotenv import load_dotenv
 from datetime import datetime
 from logger import logger
-from const import PAIRS_TO_FLUSH
+from const import PAIRS_TO_FLUSH, LAST_N_PAIRS
 from utils import ensure_user_exists
-from typing import Optional, Dict, Any
-from pydantic import BaseModel
-import asyncio
-import io
 from PIL import Image
-from client import client
-
-import json
-from livekit.rtc import DataPacketKind
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Literal
+from functions import process_user_input, handle_image_description
 
 from livekit import agents
 from livekit import rtc
@@ -30,10 +23,7 @@ from livekit.agents import ConversationItemAddedEvent
 from livekit.agents.llm import ImageContent, AudioContent
 from livekit.agents.llm import ChatContext
 
-from functions import process_user_input
-
 load_dotenv(".env")
-
 LOGIN_USERNAME = os.getenv("AGENT_LOGIN_USERNAME")
 
 class Assistant(Agent):
@@ -41,10 +31,6 @@ class Assistant(Agent):
 
     def __init__(self, chat_ctx: Optional[ChatContext] = None) -> None:
         super().__init__(
-            # instructions="""You are a helpful voice AI assistant.
-            # You eagerly assist users with their questions by providing information from your extensive knowledge.
-            # Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            # You are curious, friendly, and have a sense of humor.""",
             instructions="""
             You are a helpful voice AI assistant with special tools.
             You MUST prioritize using a tool over answering directly if a tool is relevant.
@@ -58,8 +44,11 @@ class Assistant(Agent):
 
             - **Time Tool:** If the user asks for the date or time, call 'get_current_date_and_time'.
             
-            - **Camera Control:** If the user asks to "turn on" or "turn off" the camera, 
-            you MUST call the 'control_camera' tool with the status "on" or "off".
+            - **UI/Device Control:** ALWAYS call the 'control_ui_device' tool when the user asks to control a device or UI element, 
+            EVEN IF you think the device is already in that state. Do not assume the current state:
+                - "turn on/off camera": call 'control_ui_device' (target: "camera", status: "on"/"off").
+                - "mute/unmute" or "turn on/off microphone": call 'control_ui_device' (target: "microphone", status: "on"/"off").
+                - "open/close chat" or "show/hide chat": call 'control_ui_device' (target: "chat", status: "on"/"off").
 
             **CRITICAL RULE:** Do NOT ask the user to "upload a file." 
             The 'process_file_request' tool handles file access. 
@@ -71,29 +60,13 @@ class Assistant(Agent):
         self.cache = None
 
     def update_context(self, username: str):
-        """Always keep the latest 5 context pairs."""
-
+        """Always keep the latest LAST_N_PAIRS context pairs."""
         if not self.cache:
             self.cache = ConversationCache(
                 username=username, pairs_to_flush=int(PAIRS_TO_FLUSH)
             )
-
-        new_pairs = self.cache.get_last_n_pairs(5)
+        new_pairs = self.cache.get_last_n_pairs(LAST_N_PAIRS)
         self.context_pairs = new_pairs
-
-    # async def on_transcription(self, ctx: RunContext, transcription: str):
-    #     logger.info(f"[USER] {transcription}")
-    #     try:
-    #         cache.add_user_message(transcription)
-    #     except Exception as e:
-    #         logger.error(f"Failed to add user message to cache: {e}")
-
-    # async def on_response_sent(self, ctx: RunContext, response_text: str):
-    #     logger.info(f"[AGENT] {response_text}")
-    #     try:
-    #         cache.add_agent_message(response_text)
-    #     except Exception as e:
-    #         logger.error(f"Failed to add agent message to cache or flush: {e}")
 
     @function_tool
     async def get_current_date_and_time(self, ctx: RunContext) -> str:
@@ -133,11 +106,7 @@ class Assistant(Agent):
         The 'user_input' is the user's original question.
         """
         logger.info("describe_camera_view tool called.")
-
-        # 1. Lấy room từ RunContext
         room = get_job_context().room
-
-        # 2. Tìm participant và video track
         participant = next(iter(room.remote_participants.values()), None)
         if not participant:
             logger.warning("No remote participants found.")
@@ -153,15 +122,11 @@ class Assistant(Agent):
             logger.warning("Participant found, but no video track.")
             return "I am not receiving any video feed. Please ensure your camera is on."
 
-        # 3. Tạo stream và lấy MỘT frame
         video_stream = rtc.VideoStream(video_track_pub.track)
         frame_to_process: Optional[rtc.VideoFrame] = None
         try:
             logger.info("Waiting for video frame...")
-            # Chờ sự kiện frame đầu tiên (với timeout 2 giây)
             event = await asyncio.wait_for(anext(video_stream), timeout=2.0)
-            
-            # Lấy khung hình (VideoFrame) từ sự kiện (VideoFrameEvent)
             frame_to_process = event.frame
             logger.info("Video frame received.")
         
@@ -172,14 +137,11 @@ class Assistant(Agent):
             logger.error(f"Error getting frame from stream: {e}")
             return "An error occurred while accessing the video stream."
         finally:
-            # Rất quan trọng: Đóng stream ngay
             await video_stream.aclose()
 
         if frame_to_process is None:
             logger.warning("Frame was None after stream.")
             return "I am not receiving any video feed. Please ensure your camera is on."
-
-        # 4. Xử lý frame (Logic cũ của bạn, đã đúng)
         try:
             logger.info("Processing frame...")
             rgb_frame = frame_to_process.convert(rtc.VideoBufferType.RGB24)
@@ -190,74 +152,53 @@ class Assistant(Agent):
             img.save(buf, format="JPEG")
             img_bytes = buf.getvalue()
             base64_image = base64.b64encode(img_bytes).decode("utf-8")
-
-            # 5. Gọi API OpenAI (giữ nguyên)
+            
             logger.info("Calling OpenAI Vision API...")
-            result = client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL"),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": user_input},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=100
-            )
-            print("OpenAI response:", result.choices[0].message.content)
-            return result.choices[0].message.content
+            return handle_image_description(user_input, base64_image)
 
         except Exception as e:
             logger.error(f"Error in describe_camera_view: {e}")
             return f"Sorry, an error occurred while analyzing the image: {e}"
-    
+
     @function_tool
-    async def control_camera(self, ctx: RunContext, status: Literal["on", "off"]) -> str:
+    async def control_ui_device(
+        self, 
+        ctx: RunContext, 
+        target: Literal["camera", "microphone", "chat"], 
+        status: Literal["on", "off"]
+    ) -> str:
         """
-        Sends a command to the user's frontend to turn their camera ON or OFF.
-        Use this tool when the user explicitly asks to "turn on camera", 
-        "turn off camera", "start video", or "stop video".
-        
-        Args:
-            status (str): The desired state. Must be "on" or "off".
+        Sends a command to the user's frontend to control UI elements or devices.
+        Use this for:
+        - "turn on/off camera" (target: "camera", status: "on"/"off")
+        - "turn on/off microphone" or "mute/unmute" (target: "microphone", status: "on"/"off")
+        - "open/close chat" or "show/hide chat" (target: "chat", status: "on"/"off")
         """
-        logger.info(f"Sending 'control_camera' command: {status}")
+        logger.info(f"Sending 'control_ui_device' command: {target} -> {status}")
         
         try:
-            # 1. Lấy room
             room = get_job_context().room
-
-            # 2. Tìm participant (người dùng)
             participant = next(iter(room.remote_participants.values()), None)
             if not participant:
                 logger.warning("No remote participants found to send RPC.")
                 return "Error: I can't find you in the room to send the command."
 
-            # 3. Tạo payload (tin nhắn)
             payload = {
-                "type": "control_camera", # Tên RPC
+                "type": f"control_{target}",
                 "status": status
             }
-            
-            # 4. Gửi data packet đến CHỈ participant đó
             await room.local_participant.publish_data(
                 json.dumps(payload),
-                destination_identities=[participant.identity] # Chỉ gửi cho user
+                destination_identities=[participant.identity]
             )
             
             logger.info(f"Successfully sent command to {participant.identity}")
-            return f"Command to turn camera {status} has been sent."
+            return f"Command to turn {target} {status} has been sent."
 
         except Exception as e:
-            logger.error(f"Error sending RPC 'control_camera': {e}")
+            logger.error(f"Error sending RPC 'control_ui_device': {e}")
             return "An error occurred while trying to send the command."
+
 
 
 async def entrypoint(ctx: agents.JobContext):
@@ -271,7 +212,7 @@ async def entrypoint(ctx: agents.JobContext):
     temp_cache = ConversationCache(
         username=username, pairs_to_flush=int(PAIRS_TO_FLUSH)
     )
-    history_pairs = temp_cache.get_last_n_pairs(5)
+    history_pairs = temp_cache.get_last_n_pairs(LAST_N_PAIRS)
 
     initial_ctx = ChatContext()
     message_count = 0
@@ -315,7 +256,6 @@ async def entrypoint(ctx: agents.JobContext):
 
             new_ctx = assistant.chat_ctx.copy()
 
-            # to iterate over all types of content:
             for content in event.item.content:
                 if isinstance(content, str):
                     if role == "user":
@@ -328,10 +268,8 @@ async def entrypoint(ctx: agents.JobContext):
                         assistant.cache.add_agent_message(content)
                     new_ctx.add_message(role=role, content=content)
                 elif isinstance(content, ImageContent):
-                    # image is either a rtc.VideoFrame or URL to the image
                     print(f" - image: {content.image}")
                 elif isinstance(content, AudioContent):
-                    # frame is a list[rtc.AudioFrame]
                     print(
                         f" - audio: {content.frame}, transcript: {content.transcript}"
                     )
@@ -340,10 +278,6 @@ async def entrypoint(ctx: agents.JobContext):
             print("Updated context pairs:", assistant.context_pairs)
 
         asyncio.create_task(async_handler())
-    
-    # @session.on("video_frame")
-    # def on_video_frame(frame):
-    #     assistant.latest_frame = frame
 
     @session.on("close")
     def on_session_close():
@@ -358,7 +292,3 @@ async def entrypoint(ctx: agents.JobContext):
             noise_cancellation=noise_cancellation.BVC(),
         ),
     )
-
-
-if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
