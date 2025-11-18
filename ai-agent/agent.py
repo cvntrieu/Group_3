@@ -17,6 +17,10 @@ import io
 from PIL import Image
 from client import client
 
+import json
+from livekit.rtc import DataPacketKind
+from typing import Optional, Dict, Any, Literal
+
 from livekit import agents
 from livekit import rtc
 from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, get_job_context
@@ -53,6 +57,9 @@ class Assistant(Agent):
             you MUST call 'describe_camera_view' tool.
 
             - **Time Tool:** If the user asks for the date or time, call 'get_current_date_and_time'.
+            
+            - **Camera Control:** If the user asks to "turn on" or "turn off" the camera, 
+            you MUST call the 'control_camera' tool with the status "on" or "off".
 
             **CRITICAL RULE:** Do NOT ask the user to "upload a file." 
             The 'process_file_request' tool handles file access. 
@@ -210,6 +217,47 @@ class Assistant(Agent):
         except Exception as e:
             logger.error(f"Error in describe_camera_view: {e}")
             return f"Sorry, an error occurred while analyzing the image: {e}"
+    
+    @function_tool
+    async def control_camera(self, ctx: RunContext, status: Literal["on", "off"]) -> str:
+        """
+        Sends a command to the user's frontend to turn their camera ON or OFF.
+        Use this tool when the user explicitly asks to "turn on camera", 
+        "turn off camera", "start video", or "stop video".
+        
+        Args:
+            status (str): The desired state. Must be "on" or "off".
+        """
+        logger.info(f"Sending 'control_camera' command: {status}")
+        
+        try:
+            # 1. Lấy room
+            room = get_job_context().room
+
+            # 2. Tìm participant (người dùng)
+            participant = next(iter(room.remote_participants.values()), None)
+            if not participant:
+                logger.warning("No remote participants found to send RPC.")
+                return "Error: I can't find you in the room to send the command."
+
+            # 3. Tạo payload (tin nhắn)
+            payload = {
+                "type": "control_camera", # Tên RPC
+                "status": status
+            }
+            
+            # 4. Gửi data packet đến CHỈ participant đó
+            await room.local_participant.publish_data(
+                json.dumps(payload),
+                destination_identities=[participant.identity] # Chỉ gửi cho user
+            )
+            
+            logger.info(f"Successfully sent command to {participant.identity}")
+            return f"Command to turn camera {status} has been sent."
+
+        except Exception as e:
+            logger.error(f"Error sending RPC 'control_camera': {e}")
+            return "An error occurred while trying to send the command."
 
 
 async def entrypoint(ctx: agents.JobContext):

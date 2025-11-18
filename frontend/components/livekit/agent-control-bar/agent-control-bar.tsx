@@ -1,8 +1,8 @@
 'use client';
 
-import { type HTMLAttributes, useCallback, useState } from 'react';
-import { Track } from 'livekit-client';
-import { useChat, useRemoteParticipants } from '@livekit/components-react';
+import { type HTMLAttributes, useCallback, useState, useEffect } from 'react';
+import { Track, RoomEvent, type RemoteParticipant } from 'livekit-client';
+import { useChat, useRemoteParticipants, useRoomContext } from '@livekit/components-react';
 import { ChatTextIcon, PhoneDisconnectIcon } from '@phosphor-icons/react/dist/ssr';
 import { useSession } from '@/components/app/session-provider';
 import { TrackToggle } from '@/components/livekit/agent-control-bar/track-toggle';
@@ -46,6 +46,7 @@ export function AgentControlBar({
   const [chatOpen, setChatOpen] = useState(false);
   const publishPermissions = usePublishPermissions();
   const { isSessionActive, endSession } = useSession();
+  const room = useRoomContext();
 
   const {
     micTrackRef,
@@ -57,6 +58,36 @@ export function AgentControlBar({
     handleMicrophoneDeviceSelectError,
     handleCameraDeviceSelectError,
   } = useInputControls({ onDeviceError, saveUserChoices });
+
+  useEffect(() => {
+    if (!room) return;
+    const textDecoder = new TextDecoder();
+    const handleAgentCommand = async (data: any) => {
+      if (data.type === 'control_camera') {
+        console.log(`Agent command received: Turn camera ${data.status}`);
+        try {
+          const enabled = data.status === 'on';
+          await room.localParticipant.setCameraEnabled(enabled);
+        } catch (error) {
+          console.error("Failed to execute camera control:", error);
+        }
+      }
+    };
+
+    const handleDataReceived = (payload: Uint8Array, participant?: RemoteParticipant) => {
+      try {
+        const dataStr = textDecoder.decode(payload);
+        const data = JSON.parse(dataStr);
+        handleAgentCommand(data);
+      } catch (error) {
+        console.error("Failed to parse agent data packet:", error);
+      }
+    };
+    room.on(RoomEvent.DataReceived, handleDataReceived);
+    return () => {
+      room.off(RoomEvent.DataReceived, handleDataReceived);
+    };
+  }, [room]);
 
   const handleSendMessage = async (message: string) => {
     await send(message);
