@@ -203,31 +203,45 @@ class Assistant(Agent):
 
 async def entrypoint(ctx: agents.JobContext):
     """Entry point for the agent session."""
-
     username = LOGIN_USERNAME
+    
+    async def on_participant_connected(ctx: agents.JobContext, participant: rtc.RemoteParticipant):
+        logger.info(f"Participant {participant.identity} joined the room")
+        # Lấy context từ server
+        temp_cache = ConversationCache(
+            username=participant.identity, pairs_to_flush=int(PAIRS_TO_FLUSH)
+        )
+        history_pairs = temp_cache.get_last_n_pairs(LAST_N_PAIRS)
+        initial_ctx = ChatContext()
+        message_count = 0
+        for pair in history_pairs:
+            if pair.get("user"):
+                initial_ctx.add_message(role="user", content=pair["user"])
+                message_count += 1
+            if pair.get("bot"):
+                initial_ctx.add_message(role="assistant", content=pair["bot"])
+                message_count += 1
+        logger.info(f"Loaded {message_count} messages into agent's ChatContext.")
+        assistant.cache = temp_cache
+        assistant.context_pairs = history_pairs
+
+        # Nạp vào agent
+        await assistant.update_chat_ctx(initial_ctx)
+        assistant.update_context(assistant.cache.username)
+
+    def on_participant_disconnected(participant: rtc.RemoteParticipant):
+        logger.info(f"Participant disconnected: {participant.identity}")
+        assistant.cache.flush()  
+
+    ctx.add_participant_entrypoint(entrypoint_fnc=on_participant_connected)
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
+    
     if not ensure_user_exists(username):
         logger.error(
             "Cannot initialize assistant because user registration/login failed."
         )
-    temp_cache = ConversationCache(
-        username=username, pairs_to_flush=int(PAIRS_TO_FLUSH)
-    )
-    history_pairs = temp_cache.get_last_n_pairs(LAST_N_PAIRS)
 
-    initial_ctx = ChatContext()
-    message_count = 0
-    for pair in history_pairs:
-        if pair.get("user"):
-            initial_ctx.add_message(role="user", content=pair["user"])
-            message_count += 1
-        if pair.get("bot"):
-            initial_ctx.add_message(role="assistant", content=pair["bot"])
-            message_count += 1
-    logger.info(f"Loaded {message_count} messages into agent's ChatContext.")
-
-    assistant = Assistant(chat_ctx=initial_ctx)
-    assistant.cache = temp_cache
-    assistant.context_pairs = history_pairs
+    assistant = Assistant()
 
     session = AgentSession(
         stt=azure.STT(
@@ -279,10 +293,10 @@ async def entrypoint(ctx: agents.JobContext):
 
         asyncio.create_task(async_handler())
 
-    @session.on("close")
-    def on_session_close():
-        logger.info("Session is closing.")
-        assistant.cache.flush()
+    # @session.on("close")
+    # def on_session_close():
+    #     logger.info("Session is closing.")
+    #     assistant.cache.flush()
 
     await session.start(
         room=ctx.room,
